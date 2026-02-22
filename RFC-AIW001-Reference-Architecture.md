@@ -1,4 +1,4 @@
-# RFC AIW001: Reference Architecture - Agentic Automations on GCP with Cloud Run Functions
+# RFC AIW001: Reference Architecture - Tools and Patterns for Agentic Automations on GCP with Cloud Run Functions
 
 **Status**: Proposed  
 **Owners**: Platform Eng  
