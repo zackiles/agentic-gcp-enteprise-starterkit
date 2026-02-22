@@ -8,7 +8,7 @@
 
 ## Background
 
-Enterprise adoption of agentic workflows is facing several challenges, in paritcular, getting momentum on origanizational participation and experimentation needed to move at the same pace as the advancements in AI itself. A next step was recently propose to tackle these challenges using a reference architecture and its implementation in the form of a "starter kit".
+Enterprise adoption of agentic workflows is facing several challenges, in paritcular, getting momentum on origanizational participation and experimentation needed to move at the same pace as the advancements in AI itself. A next step was recently proposed to tackle these challenges using a reference architecture and its implementation in the form of a "starter kit".
 
 ---
 
