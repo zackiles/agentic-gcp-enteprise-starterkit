@@ -17,7 +17,7 @@ Enterprise adoption of agentic workflows is facing several challenges, in paritc
 - Serverless execution, pay-per-use, auto-scale, low ops. Cloud Run functions (the successor name for "Cloud Functions 2nd gen") inherits Cloud Run's scaling and knobs like concurrency. Default concurrency is 80 and can be raised to 1000 per instance. [Cloud Run Concurrency](https://cloud.google.com/run/docs/configuring/concurrency)  
 - First-class triggers: HTTP, Pub/Sub, Scheduler. Straightforward IAM. [Triggering Cloud Run / Functions](https://cloud.google.com/run/docs/triggering)  
 - Secrets management and short‑lived CI/CD auth via Workload Identity Federation. No static keys. [Workload Identity Federation](https://cloud.google.com/iam/docs/workload-identity-federation)  
-- We standardize on Cursor CLI "agents" as the execution engine, invoked from Node.js functions. [Cursor CLI](https://cursor.com/docs/cli)
+- We standardize on Cursor CLI "agents" as the execution engine, invoked from Node.js functions. [Cursor CLI](https://cursor.com/docs/cli) but this architecture is flexible enough for all headless agent runtimes (e.g. Gemini CLI, Claude Code CLI, OpenClaw, as well as custom model-wrappers as long as they can be interfaced with over stdio)
 
 ---
 
