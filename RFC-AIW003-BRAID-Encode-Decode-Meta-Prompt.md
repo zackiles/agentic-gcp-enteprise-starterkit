@@ -1,4 +1,4 @@
-: BRAID Reasoning Layer for Agentic Automations
+RFC AIW003: BRAID Reasoning Layer for Agentic Automations
 
 **Status**: Proposed  
 **Owners**: Platform Eng  
