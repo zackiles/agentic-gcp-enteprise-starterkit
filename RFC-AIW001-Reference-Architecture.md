@@ -149,6 +149,20 @@ This model is intentionally limited. It handles the majority of single-agent and
 
 Security in agent-native systems is a first-class concern, not a gate that slows delivery. The model below is designed to be adopted in minutes (copy the service account template, set the IAM bindings) while satisfying the core controls that regulated industries require. Formal threat modeling, penetration testing, and compliance certification are assumed to follow as agent workloads mature from experiment to production—but nothing here prevents those activities, and the per-agent isolation model gives auditors clean boundaries to inspect.
 
+### Agent-specific risk landscape
+
+Agent workloads introduce risks that traditional microservices do not have. The golden path must acknowledge these plainly so teams can reason about them from day one:
+
+| Risk | Description | AIW001 mitigation |
+|------|-------------|-------------------|
+| **Untrusted trigger abuse** | Slack webhooks, GitHub events, and HTTP endpoints are externally reachable. A malicious or malformed payload can trigger expensive agent runs, exfiltrate data via crafted prompts, or consume budgets. | Verify Slack signatures. Restrict ingress. Validate payloads at the router before publishing to Pub/Sub. Set `maxInstanceCount` and billing budgets. |
+| **Uncontrolled tool-use (RCE-by-design)** | Headless agent CLIs can read files, write files, and execute shell commands. Without constraints, this is remote code execution as a feature. | Deny shell execution by default via `.cursor/cli.json`. Scope agent tool permissions to the minimum required for the task. |
+| **Prompt/tool injection** | Malicious content in PR diffs, Jira descriptions, or Slack messages can manipulate agent behavior through injected instructions. | Keep agents focused on narrow tasks with constrained output sinks. BRAID reasoning (AIW003) bounds execution paths. Full mitigation requires structured prompt hygiene (future RFC). |
+| **Data exfiltration via agent output** | An agent with read access to a codebase and write access to an external sink (Slack, GitHub) could inadvertently leak sensitive data. | Least-privilege IAM per function. Restrict sink write scopes. Review agent output in shadow/dry-run mode before enabling autonomous posting. |
+| **Secret exposure** | Agent processes inherit environment variables including API keys. A compromised or misbehaving agent could log or transmit these. | Secrets via Secret Manager only. Per-invocation sandbox isolates the environment. Deny shell access to prevent `env` or `printenv` exfiltration. |
+
+### Golden path controls
+
 - **Per‑function service accounts** (zero-standing-privilege agents) with least‑privilege roles:  
   - Workers: `roles/secretmanager.secretAccessor`, `roles/pubsub.subscriber`, plus write to sink target.  
   - Router: `roles/pubsub.publisher`.  
@@ -156,6 +170,8 @@ Security in agent-native systems is a first-class concern, not a gate that slows
 - **Agent tool-use sandboxing**: The `.cursor/cli.json` permissions file shipped with each function denies shell execution by default. Agents operate within a declared tool-use boundary, reducing blast radius and making behavior auditable. This is the agent-native equivalent of a container security policy—but simpler to reason about and enforce.
 - **CI/CD**: GitHub Actions → Google Cloud via Workload Identity Federation. No JSON keys. Use `google-github-actions/auth@v2` + `setup-gcloud@v2`. [Auth Action](https://github.com/google-github-actions/auth) • [setup-gcloud](https://github.com/google-github-actions/setup-gcloud)  
 - **Secrets**: Cursor API key and third‑party tokens live in Secret Manager; rotate on schedule. [Secret Practices](https://cloud.google.com/secret-manager/docs/best-practices)
+
+> **Next step**: A future extension RFC ("Threat Model and Policy Controls for Multi-tenant Agents") should cover: formal threat modeling for agent workflows, per-tenant resource quotas and rate limiting, policy-as-code for tool permissions (beyond static `.cursor/cli.json`), structured prompt hygiene patterns, schema validation of inbound payloads, allowlist/denylist management for agent tool-use, and abuse monitoring/alerting.
 
 ---
 
