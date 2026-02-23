@@ -169,7 +169,32 @@ Security in agent-native systems is a first-class concern, not a gate that slows
 
 ---
 
-## 7) Message contract (Pub/Sub)
+## 7) Message contract (Pub/Sub) and artifact pipeline
+
+### Reference-first payloads
+
+Pub/Sub messages are **glue, not storage**. Messages carry references (URIs, metadata, identifiers) that point to data living in external systems—not the data itself. This principle is critical for scaling beyond toy examples:
+
+- Pub/Sub enforces a 10 MB message limit. Agent inputs (repository snapshots, document collections, prior conversation history) routinely exceed this.
+- Raw stdout embedded in messages creates coupling between producer and consumer. A reference to a GCS object is stable, retrievable, and cacheable.
+- Multi-tenant environments require clear data boundaries. A GCS URI scoped by tenant and correlation_id is inherently partitioned; an inline blob is not.
+
+### GCS as the artifact store
+
+GCS is the first-class artifact store for the golden path. All agent inputs that exceed trivial size, and all agent outputs worth persisting, flow through GCS:
+
+```
+gs://<project-or-tenant-bucket>/<agent-name>/<correlation_id>/
+  ├── input/          # Context assembled for the agent (diffs, docs, prior outputs)
+  ├── output/         # Agent results (review comments, generated code, reports)
+  └── metadata.json   # Execution metadata (duration, exit code, model, token usage)
+```
+
+**Multi-tenant segmentation**: For enterprise SaaS deployments, segment artifacts logically—by tenant bucket or by prefix convention—with GCS lifecycle policies for automatic cleanup. Example: `gs://agents-artifacts-tenantA/pr-reviewer/<correlation_id>/`.
+
+The router/gateway is the natural component to manage artifact references: it can mint the GCS paths, propagate them through the message contract to sub-agents, and ensure sinks (GitHub, Slack, Jira) receive the correct references for follow-up retrieval.
+
+### Message contract
 
 ```jsonc
 {
@@ -181,17 +206,24 @@ Security in agent-native systems is a first-class concern, not a gate that slows
   },
   "context": {
     "repo_ref": "org/repo#sha",
-    "artifacts": ["gs://bucket/path/..."]
+    "artifacts": ["gs://agents-artifacts/pr-reviewer/uuid-v4/input/diff.patch"]
   },
   "reply": {
     "type": "github.pr_review|slack.message|jira.issue",
     "targets": { /* per sink */ }
   },
+  "output": {
+    "artifacts_base": "gs://agents-artifacts/pr-reviewer/uuid-v4/output/"
+  },
   "timeouts": { "hard_seconds": 900 }
 }
 ```
 
-Use GCS for payloads > 10 MB. Include `correlation_id` for dedupe and tracing.
+**Rules of thumb**:
+- If a payload field exceeds ~100 KB, store it in GCS and pass the URI instead.
+- Always include `correlation_id` for dedupe, tracing, and artifact path construction.
+- Workers read from `context.artifacts` URIs, write results to `output.artifacts_base`, and return lightweight structured summaries in their Pub/Sub response or sink post.
+- The router mints `correlation_id` and `artifacts_base` paths; workers consume them. This keeps worker code simple and stateless.
 
 ---
 
@@ -625,7 +657,7 @@ Alert when count exceeds threshold over 5-minute window.
 - **Idempotency**: Deduplicate on `correlation_id`.  
 - **Retries**: Prefer subscription retry + DLQ over function auto‑retry to avoid duplicate side‑effects. [Pub/Sub Retry & DLQ](https://cloud.google.com/pubsub/docs/dead-letter-topics)  
 - **Backpressure**: Cap max instances per worker; tune concurrency. [Autoscaling](https://cloud.google.com/run/docs/configuring/autoscaling)  
-- **Large inputs**: Store in GCS; pass URI in message. [Cloud Storage](https://cloud.google.com/storage/docs)
+- **Large inputs/outputs**: Follow the reference-first pattern from Section 7. Store all non-trivial payloads in GCS at the `artifacts_base` path scoped by `correlation_id`; pass URIs in messages. This avoids Pub/Sub size limits and makes agent inputs/outputs retrievable for replay and debugging. [Cloud Storage](https://cloud.google.com/storage/docs)
 
 ---
 
