@@ -128,6 +128,20 @@ Cloud Run offers two deployment models: **Cloud Run Functions** (event-driven, s
 - Ephemeral filesystem only; each invocation gets a sandboxed `/tmp/<correlation_id>` directory. Use GCS for persistence; Redis/Firestore for state. [Execution Environment](https://cloud.google.com/run/docs/container-contract)  
 - Observability: Cloud Logging, Monitoring, and Error Reporting are integrated out of the box—no sidecar agents, no collector infrastructure. [Cloud Logging](https://cloud.google.com/logging/docs) • [Monitoring](https://cloud.google.com/monitoring/docs) • [Error Reporting](https://cloud.google.com/error-reporting/docs)
 
+### Network and egress prerequisites
+
+Agent functions require outbound HTTPS connectivity to external services. In enterprise environments with restrictive egress controls (VPC Service Controls, NAT gateways, firewall rules), these requirements can silently break agent workflows with opaque timeouts. State the dependencies explicitly during project setup:
+
+**Required outbound endpoints**:
+- **Agent runtime API**: Cursor API / model provider endpoints (e.g., `api.cursor.com`, `api.openai.com`, `api.anthropic.com`)
+- **Sink APIs**: GitHub (`api.github.com`), Slack (`slack.com`), Jira (`*.atlassian.net`) — as applicable per agent
+- **GCP services**: Secret Manager, Pub/Sub, GCS, Cloud Logging — typically reachable via Google private access, but verify in VPC-SC configurations
+
+**Operational guidance**:
+- Add a health-check probe to the cold-start self-check (Section 9) that verifies reachability of the agent runtime API endpoint. Fail fast with a clear error message naming the unreachable host rather than letting the agent hang and hit the hard timeout.
+- If the organization enforces egress allowlists, provide the list above to the networking team as a prerequisite during the clickops setup phase (AIW002 Section 7.1).
+- Detailed networking architecture decisions (VPC-SC perimeter design, Cloud NAT configuration, egress firewall rules) are out of scope for this RFC. Teams should follow existing organizational network policy and escalate if agent endpoints are blocked.
+
 ### Workspace model: ephemeral-local, externalized-state
 
 The golden path for agent state is deliberately simple. Each worker invocation assembles a local ephemeral workspace at `/tmp/<correlation_id>`, pulls whatever context it needs from external systems (GitHub repos, Jira tickets, Confluence pages, GCS artifacts), reasons over that context, and emits results back to those same systems and/or publishes follow-up Pub/Sub events. When the function exits, the workspace is gone.
