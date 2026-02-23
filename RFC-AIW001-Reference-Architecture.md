@@ -654,7 +654,22 @@ Alert when count exceeds threshold over 5-minute window.
 
 ## 13) Reliability patterns
 
-- **Idempotency**: Deduplicate on `correlation_id`.  
+### Correlation and idempotency (high priority)
+
+The combination of Pub/Sub retries, DLQ redelivery, hard watchdog kills, and external side-effects (PR comments, Slack posts, Jira ticket creation) will produce duplicate actions without deliberate correlation and idempotency. This is the single most common operational pain point for agent workflows at scale, and teams should treat it as high priority from the first production deployment.
+
+**Golden path for AIW001**:
+
+- `correlation_id` is a **required field** on every message. The router generates it; workers propagate it. No message enters the system without one.
+- Every external side-effect produced by an agent should include `correlation_id` as a marker: in GitHub comment metadata, Slack message metadata, Jira issue labels, and GCS object paths. This enables downstream consumers and operators to trace, deduplicate, and replay.
+- Workers should check for the existence of their output artifacts (e.g., a GCS object at `output.artifacts_base`) before executing, as a lightweight idempotency guard. If artifacts already exist for a given `correlation_id`, the invocation is likely a retry and can short-circuit.
+
+**What AIW001 does not specify**: The exact dedupe store implementation (Firestore, Redis, Memorystore), sink-specific idempotent write patterns (GitHub's conditional requests, Slack's `response_url` semantics), or replay tooling. These are critical for production maturity but out of scope for the initial golden path.
+
+> **Next step (high priority)**: A future extension RFC ("Correlation, Idempotency, and Exactly-once-ish Side Effects for Agent Workflows") should cover: dedupe store selection, per-sink idempotent patterns, replay and reprocessing tooling, and handling of partial failures where an agent succeeds but the sink write fails.
+
+### Additional reliability patterns
+
 - **Retries**: Prefer subscription retry + DLQ over function auto‑retry to avoid duplicate side‑effects. [Pub/Sub Retry & DLQ](https://cloud.google.com/pubsub/docs/dead-letter-topics)  
 - **Backpressure**: Cap max instances per worker; tune concurrency. [Autoscaling](https://cloud.google.com/run/docs/configuring/autoscaling)  
 - **Large inputs/outputs**: Follow the reference-first pattern from Section 7. Store all non-trivial payloads in GCS at the `artifacts_base` path scoped by `correlation_id`; pass URIs in messages. This avoids Pub/Sub size limits and makes agent inputs/outputs retrievable for replay and debugging. [Cloud Storage](https://cloud.google.com/storage/docs)
