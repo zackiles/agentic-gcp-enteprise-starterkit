@@ -1,0 +1,3 @@
+name: agentic-gcp-starterkit
+runtime: nodejs
+description: Pulumi stack for agentic GCP enterprise starter kit

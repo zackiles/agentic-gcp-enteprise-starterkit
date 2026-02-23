@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "shell": {
+      "default": "deny",
+      "allow": []
+    }
+  }
+}

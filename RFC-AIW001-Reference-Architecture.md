@@ -199,7 +199,7 @@ const routerFn = new gcp.cloudfunctionsv2.Function("router-fn", {
   },
 });
 
-// Worker (Pub/Sub trigger)
+// Worker (Pub/Sub trigger) — concurrency=1 prevents parallel CLI state corruption
 const workerFn = new gcp.cloudfunctionsv2.Function("pr-reviewer-fn", {
   location: region,
   name: "agent-pr-reviewer",
@@ -211,6 +211,7 @@ const workerFn = new gcp.cloudfunctionsv2.Function("pr-reviewer-fn", {
   serviceConfig: {
     availableMemory: "2Gi",
     maxInstanceCount: 50,
+    maxInstanceRequestConcurrency: 1,
     timeoutSeconds: 1800,
     environmentVariables: {
       CURSOR_API_KEY_SECRET: cursorSecret.id,
@@ -227,7 +228,7 @@ const workerFn = new gcp.cloudfunctionsv2.Function("pr-reviewer-fn", {
     eventType: "google.cloud.pubsub.topic.v1.messagePublished",
     pubsubTopic: main.id,
     triggerRegion: region,
-    retryPolicy: "RETRY_POLICY_DO_NOT_RETRY", // rely on sub's retry+DLQ
+    retryPolicy: "RETRY_POLICY_DO_NOT_RETRY",
   },
 });
 ```
@@ -250,19 +251,17 @@ const topic = process.env.PUBSUB_TOPIC!;
 const pubsub = new PubSub();
 
 function verifySlack(req: any): boolean {
-  // Slack HMAC SHA256 verification per https://api.slack.com/authentication/verifying-requests-from-slack
   const signingSecret = process.env.SLACK_SIGNING_SECRET!;
   const timestamp = req.headers["x-slack-request-timestamp"];
   const signature = req.headers["x-slack-signature"];
   const body = typeof req.body === "string" ? req.body : JSON.stringify(req.body);
 
-  // Reject old requests (replay attack prevention)
   if (Math.abs(Date.now() / 1000 - Number(timestamp)) > 60 * 5) return false;
 
   const baseString = `v0:${timestamp}:${body}`;
   const hmac = crypto.createHmac("sha256", signingSecret);
   const computedSig = `v0=${hmac.update(baseString).digest("hex")}`;
-  
+
   return crypto.timingSafeEqual(
     Buffer.from(computedSig, "utf8"),
     Buffer.from(signature, "utf8")
@@ -271,10 +270,7 @@ function verifySlack(req: any): boolean {
 
 http("router", async (req, res) => {
   const source = req.headers["user-agent"]?.includes("Slackbot") ? "slack" : "other";
-  
-  // Slack bots at your company can interface with this function:
-  // - Fire-and-forget: Send request, get 202 ack immediately
-  // - Wait for response: Worker will post results to response_url
+
   if (source === "slack" && !verifySlack(req)) return res.status(401).send("bad sig");
 
   const payload = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
@@ -288,7 +284,6 @@ http("router", async (req, res) => {
   };
 
   await pubsub.topic(topic).publishMessage({ json: msg });
-  // Slack: immediate ack within 3s; follow-up via response_url by worker
   res.status(202).send({ ok: true, id: msg.correlation_id });
 });
 ```
@@ -297,86 +292,148 @@ Slack timing and delayed responses are required; verify with signatures. [Verify
 
 **Worker (Pub/Sub → Cursor CLI)**
 
+> **AIW0001 quick wins applied**: `shell: false` in `spawn()`, binary invoked from `PATH` (not `node_modules/.bin`), per-invocation `/tmp` isolation via `correlation_id`, hard watchdog with process-group kill, and cold-start self-check on module load.
+
 ```ts
 // functions/worker.ts
 import { cloudEvent } from "@google-cloud/functions-framework";
-import { spawn } from "child_process";
+import { spawn, execFileSync } from "child_process";
 import { Buffer } from "node:buffer";
+import { mkdirSync } from "node:fs";
 import fetch from "node-fetch";
+
+const CURSOR_BIN = "cursor-agent";
 
 type PubSubEvent = { data?: { message?: { data?: string } } };
 
-function decodeMessage(e: any) {
-  try {
-    const b64 = e?.data?.message?.data;
-    if (!b64) throw new Error("no data");
-    const raw = Buffer.from(b64, "base64").toString();
-    return JSON.parse(raw);
-  } catch (err) {
-    throw new Error(`Malformed Pub/Sub message: ${err}`);
-  }
+// Cold-start self-check: fail fast if binary is missing
+try {
+  const version = execFileSync(CURSOR_BIN, ["--version"], {
+    timeout: 10_000,
+    encoding: "utf8",
+  }).trim();
+  console.log(`Cold-start check passed: ${CURSOR_BIN} ${version}`);
+} catch (err) {
+  throw new Error(
+    `Cold-start check failed: "${CURSOR_BIN}" is not installed or not on PATH. ` +
+      `Ensure the binary is present at build time. Details: ${err}`,
+  );
 }
 
-async function runCursorAgent(args: string[], env: NodeJS.ProcessEnv) {
-  // Cursor CLI invocation per https://cursor.com/docs/cli
-  // Typical commands: "cursor agent [strategy]" or "cursor --agent"
-  // This wrapper assumes a custom "cursor-agent" binary from @cursor/cli package
-  // that supports --name and --input args for remote agent triggering with API key auth.
-  return new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
-    const proc = spawn("./node_modules/.bin/cursor-agent", args, { env, shell: true });
-    let out = "", err = "";
-    proc.stdout.on("data", (d) => (out += d.toString()));
-    proc.stderr.on("data", (d) => (err += d.toString()));
-    proc.on("close", (code) => resolve({ code: code ?? 1, stdout: out, stderr: err }));
-  });
+function decode(event: any) {
+  const b64 = event?.data?.message?.data;
+  if (!b64) throw new Error("Malformed Pub/Sub message: missing data field");
+  return JSON.parse(Buffer.from(b64, "base64").toString());
+}
+
+function runAgent(
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  correlationId: string,
+  hardSeconds: number,
+) {
+  // Per-invocation sandbox: cwd + HOME + XDG dirs scoped to correlation_id
+  const sandbox = `/tmp/${correlationId}`;
+  mkdirSync(sandbox, { recursive: true });
+
+  return new Promise<{ code: number; stdout: string; stderr: string }>(
+    (resolve, reject) => {
+      const proc = spawn(CURSOR_BIN, args, {
+        cwd: sandbox,
+        env: {
+          ...env,
+          HOME: sandbox,
+          XDG_CACHE_HOME: `${sandbox}/.cache`,
+          XDG_CONFIG_HOME: `${sandbox}/.config`,
+        },
+        shell: false,
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: true,
+      });
+
+      let out = "";
+      let err = "";
+      proc.stdout.on("data", (d: Buffer) => (out += d.toString()));
+      proc.stderr.on("data", (d: Buffer) => (err += d.toString()));
+
+      // Hard watchdog: kill the entire process group on timeout
+      const timer = setTimeout(() => {
+        try {
+          process.kill(-proc.pid!, "SIGKILL");
+        } catch {
+          proc.kill("SIGKILL");
+        }
+        reject(new Error(`cursor-agent exceeded ${hardSeconds}s hard timeout`));
+      }, hardSeconds * 1000);
+
+      proc.on("close", (code) => {
+        clearTimeout(timer);
+        resolve({ code: code ?? 1, stdout: out, stderr: err });
+      });
+
+      proc.on("error", (e) => {
+        clearTimeout(timer);
+        reject(e);
+      });
+    },
+  );
+}
+
+async function postGitHub(targets: any, body: string) {
+  await fetch(
+    `https://api.github.com/repos/${targets.repo}/issues/${targets.pr}/comments`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${targets.token}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ body }),
+    },
+  );
 }
 
 cloudEvent<PubSubEvent>("worker", async (event) => {
-  const msg = decodeMessage(event);
+  const msg = decode(event);
   const key = process.env.CURSOR_API_KEY;
   if (!key) throw new Error("missing CURSOR_API_KEY");
+
+  const correlationId = msg.correlation_id || crypto.randomUUID();
+  const hardSeconds = msg.timeouts?.hard_seconds ?? 900;
 
   const args = [
     "--name", msg.agent?.name ?? "default",
     "--input", JSON.stringify(msg),
   ];
 
-  const { code, stdout, stderr } = await runCursorAgent(args, {
-    ...process.env,
-    CURSOR_API_KEY: key,
-  });
+  const { code, stdout, stderr } = await runAgent(
+    args,
+    { ...process.env, CURSOR_API_KEY: key },
+    correlationId,
+    hardSeconds,
+  );
 
   if (code !== 0) throw new Error(`cursor failed: ${stderr.slice(0, 4000)}`);
 
-  // Optional sinks:
   if (msg.reply?.type?.startsWith("github.")) {
     await postGitHub(msg.reply.targets, stdout);
   }
   if (msg.reply?.type === "slack.message") {
     await fetch(msg.reply.targets.response_url, {
-      method: "POST", headers: { "Content-Type": "application/json" },
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: stdout.slice(0, 39000) }),
     });
   }
 });
-
-async function postGitHub(t: any, body: string) {
-  // example: issue comment on PR
-  await fetch(`https://api.github.com/repos/${t.repo}/issues/${t.pr}/comments`, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${t.token}`,
-      "Accept": "application/vnd.github+json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ body }),
-  });
-}
 ```
 
 Cursor CLI usage and Slack delayed responses are standard patterns. References: [Cursor CLI](https://cursor.com/docs/cli) • [Slack response_url](https://api.slack.com/interactivity/handling)
 
 **package.json (agents-mono/functions)**
+
+> The `cursor-agent` binary must be available on `PATH` at build time (installed in the container image or vendored into the build output). Do **not** rely on `node_modules/.bin`.
 
 ```json
 {
@@ -386,12 +443,27 @@ Cursor CLI usage and Slack delayed responses are standard patterns. References: 
   "dependencies": {
     "@google-cloud/functions-framework": "^3.4.0",
     "@google-cloud/pubsub": "^7.7.0",
-    "node-fetch": "^3.3.2",
-    "@cursor/cli": "^1.0.0"
+    "node-fetch": "^3.3.2"
   },
   "scripts": {
     "start": "functions-framework --target=router",
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "check-agent": "cursor-agent --version"
+  }
+}
+```
+
+**Cursor CLI permissions (`.cursor/cli.json`)**
+
+> Ship this file in the function's build output to deny shell execution by default. This reduces blast radius and makes agent behavior deterministic.
+
+```json
+{
+  "permissions": {
+    "shell": {
+      "default": "deny",
+      "allow": []
+    }
   }
 }
 ```
