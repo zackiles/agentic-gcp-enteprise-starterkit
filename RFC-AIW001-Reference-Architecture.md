@@ -128,6 +128,21 @@ Cloud Run offers two deployment models: **Cloud Run Functions** (event-driven, s
 - Ephemeral filesystem only; each invocation gets a sandboxed `/tmp/<correlation_id>` directory. Use GCS for persistence; Redis/Firestore for state. [Execution Environment](https://cloud.google.com/run/docs/container-contract)  
 - Observability: Cloud Logging, Monitoring, and Error Reporting are integrated out of the box—no sidecar agents, no collector infrastructure. [Cloud Logging](https://cloud.google.com/logging/docs) • [Monitoring](https://cloud.google.com/monitoring/docs) • [Error Reporting](https://cloud.google.com/error-reporting/docs)
 
+### Workspace model: ephemeral-local, externalized-state
+
+The golden path for agent state is deliberately simple. Each worker invocation assembles a local ephemeral workspace at `/tmp/<correlation_id>`, pulls whatever context it needs from external systems (GitHub repos, Jira tickets, Confluence pages, GCS artifacts), reasons over that context, and emits results back to those same systems and/or publishes follow-up Pub/Sub events. When the function exits, the workspace is gone.
+
+This means **agents do not share state with each other through the filesystem, through in-memory caches, or through any mechanism internal to the function**. All persistent state is externalized into the systems agents already interact with:
+
+- **Source of truth for code context**: Git repositories (cloned into the sandbox or fetched as patches/diffs)
+- **Source of truth for task context**: Issue trackers (Jira, GitHub Issues), documentation (Confluence, Notion), Slack threads
+- **Artifact storage**: GCS buckets scoped by tenant and correlation_id (see Section 7)
+- **Event history**: Pub/Sub messages and Cloud Logging entries, traceable via `correlation_id`
+
+This model is intentionally limited. It handles the majority of single-agent and simple multi-agent workflows without introducing shared databases, distributed caches, or durable execution graphs. Those capabilities are real needs that will emerge as agent workflows grow more sophisticated—but they are not prerequisites for shipping the first wave of production automations.
+
+> **Next step**: A future extension RFC ("Agent State and Storage Patterns") should address advanced state requirements: shared context across multi-step agent chains, durable execution graphs for long-running workflows, Redis/Firestore for conversational agent memory, and cross-agent knowledge bases. The workspace model defined here remains the foundation—externalized state is always the default; internal state is the exception that requires justification.
+
 ---
 
 ## 5) Security and IAM
@@ -729,6 +744,8 @@ This golden path does not replace the organization's existing microservice and c
 - **Agent-native path**: Ephemeral reasoning workloads, event-driven automations, tool-calling agents. Optimized for experimentation velocity, rapid iteration, and low operational overhead.
 
 Over time, these paths may converge—agent capabilities may become features within traditional services, or agent orchestration may evolve to require stateful infrastructure. Either outcome is fine. The point of charting a distinct path now is not to create permanent divergence, but to give agent-native experimentation the speed it needs without waiting for traditional infrastructure patterns to adapt. The enterprise controls are present; the audit trails exist; the security model is sound. What changes is the deployment model and the expectation of how fast a team should go from idea to production.
+
+The most likely convergence point is the **router/gateway**. Today the router is a lightweight Cloud Run Function that validates payloads and fans out to Pub/Sub. As agent workflows grow in complexity—dependent execution trees, multi-step chains with shared context, fan-out/fan-in coordination—the router will naturally accumulate orchestration and state management responsibilities. At that point, it becomes a candidate to graduate from a Cloud Run Function into a containerized long-running service on the organization's existing GKE/Cloud Run service infrastructure, while the individual agent workers remain stateless Cloud Run Functions. This is a natural evolution, not a contradiction—the golden path starts simple and grows into the existing platform where the workload demands it.
 
 ---
 
