@@ -1,20 +1,22 @@
-# RFC AIW002: Local Build, Test, Deploy Workflows for Rapid Iteration of Agents and Agent-driven Self-improvement
+# RFC AIW002: Local Development Workflow — Zero-to-Agent in Minutes
 
 **Status**: Proposed  
 **Owners**: Platform Eng  
 **Reviewers**: Infra, Sec, App Teams  
 **Decision Date**: TBC (aim for review in 1-2 weeks)  
-**Scope**: Extends AIW001 with practical local development workflow enabling rapid iteration of GCP Cloud Run functions before production deployment. Focuses on clickops-to-production workflow with emphasis on local testing patterns.
+**Scope**: Extends the AIW001 golden path with a local development workflow that lets teams iterate on Cloud Run Function–based agents without cloud deployments. Covers the full loop from clone to first autonomous agent output.
 
 ---
 
 ## 1) Context and Motivation
 
-AIW001 established the reference architecture for agentic automations on GCP. This RFC addresses the **development workflow gap**: teams need to iterate quickly on agent functions locally before deploying to staging or production. Without efficient local testing, developers face slow feedback cycles, increased approval friction, and higher risk of breaking production.
+AIW001 established the agent-native golden path on GCP Cloud Run Functions. This RFC addresses the **development workflow gap**: the golden path only works if teams can iterate on agent functions locally with the same speed that Cloud Run Functions deliver in production. Without efficient local testing, developers face slow feedback cycles, increased approval friction, and higher risk of breaking production.
+
+The local workflow is designed for the same priorities as AIW001: speed of ideation, tight feedback loops, and minimal ceremony. A developer should go from `git clone` to a running agent responding to test events in under ten minutes—no cloud resources, no approval tickets, no container builds.
 
 **Goals**:
 - Enable developers to clone the reference architecture repo and have a working local environment in **under 10 minutes**
-- Provide secure, simple local testing of GCP functions that mirrors production behavior
+- Provide secure, simple local testing of Cloud Run Functions that mirrors production behavior
 - Support rapid iteration cycles (test → iterate → test) without cloud deployments
 - Establish a clear path from clickops to productionized Pulumi deployments
 - Minimize external dependencies and approval requirements for early development
@@ -23,23 +25,23 @@ AIW001 established the reference architecture for agentic automations on GCP. Th
 - Long-term production scale concerns
 - Multi-region deployment strategies
 - Advanced observability beyond basic telemetry
-- Production-grade security hardening (that comes later)
+- Production-grade security hardening (that comes later—see AIW001 Section 14 for the maturity path)
 
 ---
 
-## 2) Technology Choices: TypeScript/JavaScript for Serverless Functions and AI Integrations
+## 2) Technology Choices: TypeScript/JavaScript for Cloud Run Functions
 
-**Decision**: Standardize on TypeScript/JavaScript (Node.js 20/22) for all agent functions, even though some teams use Go.
+**Decision**: Standardize on TypeScript/JavaScript (Node.js 20/22) for all agent Cloud Run Functions, even though some teams use Go for traditional services.
 
 **Rationale**:
-- **AI/LLM ecosystem**: The JavaScript/TypeScript ecosystem has the strongest tooling and SDK support for AI integrations. Cursor CLI, OpenAI SDKs, and most agent frameworks are JavaScript-first with excellent TypeScript support.
-- **Rapid iteration**: JavaScript's interpreted nature and hot-reload capabilities enable faster development cycles. TypeScript provides type safety without the compilation overhead of Go for serverless functions.
-- **Serverless optimization**: Cloud Run functions support Node.js with minimal cold start overhead. While Go can have smaller binaries, the difference is negligible for agent functions that typically run for minutes, not milliseconds.
+- **AI/LLM ecosystem**: The JavaScript/TypeScript ecosystem has the broadest tooling and SDK support for AI integrations as of early 2026. Cursor CLI, OpenAI SDKs, Anthropic SDKs, and the majority of headless agent runtimes are JavaScript-first with excellent TypeScript support.
+- **Rapid iteration**: JavaScript's interpreted nature and hot-reload capabilities enable faster development cycles. TypeScript provides type safety without the compilation overhead of Go for Cloud Run Functions.
+- **Cloud Run Functions optimization**: Cloud Run Functions support Node.js with minimal cold start overhead. While Go can have smaller binaries, the difference is negligible for agent functions that typically run for minutes, not milliseconds.
 - **Developer experience**: Most teams already have Node.js tooling configured. TypeScript's type system catches errors early without the compile-time friction of Go for exploratory agent development.
 - **Integration simplicity**: Third-party APIs (Slack, GitHub, Jira) have mature Node.js SDKs with better documentation and community support than Go equivalents.
-- **Cursor CLI compatibility**: Cursor CLI is designed to work seamlessly with JavaScript/TypeScript codebases, making agent invocation and tooling integration more straightforward.
+- **Agent runtime compatibility**: Headless agent CLIs (Cursor, Gemini CLI, Claude Code CLI, Codex CLI) are designed to work seamlessly with JavaScript/TypeScript codebases, making agent invocation and tool-use integration straightforward.
 
-**Exception**: If a team has specific Go expertise and the agent logic is purely computational (not AI-integrated), Go remains acceptable. However, the reference architecture and tooling assume TypeScript/JavaScript.
+**Exception**: If a team has specific Go expertise and the agent logic is purely computational (not AI-integrated), Go remains acceptable. However, the golden path and all tooling assume TypeScript/JavaScript.
 
 ---
 
@@ -159,7 +161,7 @@ Local testing uses **GCP-native emulators** and the **Functions Framework** to m
 
 ### 4.2 Functions Framework for Local Testing
 
-The **Google Cloud Functions Framework** (`@google-cloud/functions-framework`) is the official tool for running Cloud Run functions locally. It emulates the production runtime environment.
+The **Google Cloud Functions Framework** (`@google-cloud/functions-framework`) is the official tool for running Cloud Run Functions locally. It emulates the production runtime environment. This is the single most important local development tool on the golden path—it lets you test the exact same function entry point that Cloud Run will invoke in production, without Docker, without containers, without a local Kubernetes cluster.
 
 **Installation**:
 ```bash
@@ -404,6 +406,8 @@ testE2E().catch(console.error);
 
 ## 6) Development Workflow: Rapid Iteration Cycle
 
+The inner loop below is the agent-native equivalent of "save → refresh browser" in web development. There are no container builds, no image pushes, no deployment pipelines between you and a running agent. This speed is the entire point of the Cloud Run Functions golden path.
+
 ### 6.1 Typical Development Session
 
 1. **Start local environment**:
@@ -475,9 +479,11 @@ For faster iteration, use a file watcher that restarts the Functions Framework o
 
 ## 7) Clickops to Production Path
 
+This section maps the progression from first experiment to production deployment. The key insight: agent-native workloads benefit from starting with the simplest possible deployment model and adding automation only when the agent's behavior and value are proven. This is the opposite of traditional microservice development where infrastructure scaffolding often precedes application logic.
+
 ### 7.1 Phase 1: Clickops (Initial Setup)
 
-**Goal**: Get a working agent deployed quickly with minimal infrastructure code.
+**Goal**: Get a working agent deployed to Cloud Run Functions quickly with minimal infrastructure code.
 
 **Steps**:
 1. Create GCP project via Console (or `gcloud projects create`)
@@ -489,7 +495,7 @@ For faster iteration, use a file watcher that restarts the Functions Framework o
    ```
 3. Create Pub/Sub topic/subscription via Console
 4. Create secrets in Secret Manager via Console
-5. Deploy function via Console or `gcloud`:
+5. Deploy Cloud Run Function via Console or `gcloud`:
    ```bash
    gcloud functions deploy router-fn \
      --gen2 \
@@ -506,6 +512,7 @@ For faster iteration, use a file watcher that restarts the Functions Framework o
 - Visual validation of resources
 - Easier to understand what's being created
 - Can transition to Pulumi incrementally
+- Reduces the number of infra tickets and approvals needed to get a first agent running. The governance maturity path (see AIW001 Section 14) is additive, not blocking.
 
 ### 7.2 Phase 2: Hybrid (Clickops + Pulumi)
 
@@ -560,6 +567,8 @@ const secret = new gcp.secretmanager.Secret("cursor-api-key", {
 
 ## 8) Security Considerations for Local Development
 
+The security posture for local development is intentionally lighter than production. This is by design: local development is for iteration speed, not compliance certification. The controls below prevent the most common mistakes (leaked keys, exposed endpoints) without adding friction to the inner loop. Production security controls are documented in AIW001 Sections 5 and 14.
+
 ### 8.1 Secret Handling
 
 **Local**:
@@ -577,7 +586,7 @@ const secret = new gcp.secretmanager.Secret("cursor-api-key", {
 
 **Local**: Functions run on `localhost` with no external exposure.
 
-**Production**: Functions use IAM for authentication, ingress restrictions, and VPC controls.
+**Production**: Cloud Run Functions use IAM for authentication, ingress restrictions, and VPC controls.
 
 ### 8.3 Authentication
 
@@ -728,13 +737,18 @@ function verifySlackSignature(req: any): boolean {
 
 ### 10.2 Complete Worker Function (Local-Ready)
 
+> Incorporates AIW0001 quick wins: `shell: false`, binary from PATH, per-invocation `/tmp` sandbox, hard watchdog, cold-start self-check. See AIW001 Section 9 for the full production version.
+
 ```typescript
 // src/functions/worker.ts
 import { cloudEvent } from "@google-cloud/functions-framework";
-import { spawn } from "child_process";
+import { spawn, execFileSync } from "child_process";
 import { Buffer } from "node:buffer";
+import { mkdirSync } from "node:fs";
 import { logger } from "../utils/logger";
 import { secrets } from "../config/secrets";
+
+const CURSOR_BIN = "cursor-agent";
 
 type PubSubMessage = {
   data?: {
@@ -744,30 +758,68 @@ type PubSubMessage = {
   };
 };
 
-function decodeMessage(event: any) {
-  try {
-    const b64 = event?.data?.message?.data;
-    if (!b64) throw new Error("No message data");
-    const raw = Buffer.from(b64, "base64").toString();
-    return JSON.parse(raw);
-  } catch (error) {
-    throw new Error(`Malformed Pub/Sub message: ${error}`);
-  }
+try {
+  const version = execFileSync(CURSOR_BIN, ["--version"], {
+    timeout: 10_000,
+    encoding: "utf8",
+  }).trim();
+  logger.info(`Cold-start check passed: ${CURSOR_BIN} ${version}`, {});
+} catch (err) {
+  throw new Error(
+    `Cold-start check failed: "${CURSOR_BIN}" not on PATH. Details: ${err}`,
+  );
 }
 
-async function runCursorAgent(args: string[], env: NodeJS.ProcessEnv) {
-  return new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
-    const proc = spawn("./node_modules/.bin/cursor-agent", args, { env, shell: true });
-    let out = "", err = "";
-    proc.stdout.on("data", (d) => (out += d.toString()));
-    proc.stderr.on("data", (d) => (err += d.toString()));
-    proc.on("close", (code) => resolve({ code: code ?? 1, stdout: out, stderr: err }));
-  });
+function decode(event: any) {
+  const b64 = event?.data?.message?.data;
+  if (!b64) throw new Error("Malformed Pub/Sub message: missing data field");
+  return JSON.parse(Buffer.from(b64, "base64").toString());
+}
+
+function runAgent(
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  correlationId: string,
+  hardSeconds: number,
+) {
+  const sandbox = `/tmp/${correlationId}`;
+  mkdirSync(sandbox, { recursive: true });
+
+  return new Promise<{ code: number; stdout: string; stderr: string }>(
+    (resolve, reject) => {
+      const proc = spawn(CURSOR_BIN, args, {
+        cwd: sandbox,
+        env: {
+          ...env,
+          HOME: sandbox,
+          XDG_CACHE_HOME: `${sandbox}/.cache`,
+          XDG_CONFIG_HOME: `${sandbox}/.config`,
+        },
+        shell: false,
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: true,
+      });
+
+      let out = "";
+      let err = "";
+      proc.stdout.on("data", (d: Buffer) => (out += d.toString()));
+      proc.stderr.on("data", (d: Buffer) => (err += d.toString()));
+
+      const timer = setTimeout(() => {
+        try { process.kill(-proc.pid!, "SIGKILL"); } catch { proc.kill("SIGKILL"); }
+        reject(new Error(`cursor-agent exceeded ${hardSeconds}s hard timeout`));
+      }, hardSeconds * 1000);
+
+      proc.on("close", (code) => { clearTimeout(timer); resolve({ code: code ?? 1, stdout: out, stderr: err }); });
+      proc.on("error", (e) => { clearTimeout(timer); reject(e); });
+    },
+  );
 }
 
 cloudEvent<PubSubMessage>("worker", async (event) => {
-  const msg = decodeMessage(event);
-  const correlationId = msg.correlation_id || "unknown";
+  const msg = decode(event);
+  const correlationId = msg.correlation_id || crypto.randomUUID();
+  const hardSeconds = msg.timeouts?.hard_seconds ?? 900;
   
   logger.info("Worker processing message", { correlationId, agent: msg.agent?.name });
 
@@ -776,19 +828,20 @@ cloudEvent<PubSubMessage>("worker", async (event) => {
     "--input", JSON.stringify(msg),
   ];
 
-  const { code, stdout, stderr } = await runCursorAgent(args, {
-    ...process.env,
-    CURSOR_API_KEY: secrets.cursorApiKey,
-  });
+  const { code, stdout, stderr } = await runAgent(
+    args,
+    { ...process.env, CURSOR_API_KEY: secrets.cursorApiKey },
+    correlationId,
+    hardSeconds,
+  );
 
   if (code !== 0) {
-    logger.error("Cursor agent failed", new Error(stderr), { correlationId });
-    throw new Error(`Cursor agent failed: ${stderr.slice(0, 4000)}`);
+    logger.error("Agent failed", new Error(stderr), { correlationId });
+    throw new Error(`Agent failed: ${stderr.slice(0, 4000)}`);
   }
 
-  logger.info("Cursor agent completed", { correlationId, outputLength: stdout.length });
+  logger.info("Agent completed", { correlationId, outputLength: stdout.length });
 
-  // Handle reply sinks (GitHub, Slack, etc.)
   if (msg.reply?.type === "github.pr_review") {
     await postGitHubReview(msg.reply.targets, stdout, correlationId);
   }
@@ -799,12 +852,10 @@ cloudEvent<PubSubMessage>("worker", async (event) => {
 });
 
 async function postGitHubReview(targets: any, body: string, correlationId: string) {
-  // Implementation from AIW001
   logger.info("Posting GitHub review", { correlationId, repo: targets.repo });
 }
 
 async function postSlackMessage(responseUrl: string, body: string, correlationId: string) {
-  // Implementation from AIW001
   logger.info("Posting Slack message", { correlationId });
 }
 ```
@@ -944,23 +995,26 @@ const getSecret = async (name: string) => {
 
 ## 13) Deployment Workflow: Local → Dev → Prod
 
+This progression is intentionally linear and simple. In traditional microservice development, the path to production often involves staging environments, canary deployments, and blue/green infrastructure. For agent-native workloads—especially during the experimentation phase—that overhead destroys the iteration speed advantage. Start simple; add sophistication only when the agent's value is proven and the blast radius of a failure justifies the additional infrastructure.
+
 ### 13.1 Local Development
 
-- All testing happens locally with emulators
-- No GCP resources needed
-- Fast iteration cycle
+- All testing happens locally with Functions Framework and emulators
+- No GCP resources needed, no container builds, no image registries
+- Fast iteration cycle measured in seconds, not minutes
 
 ### 13.2 Dev Project Deployment (Clickops)
 
-- Deploy to dev GCP project for integration testing
+- Deploy Cloud Run Functions to dev GCP project for integration testing
 - Use `gcloud` commands or Console
 - Verify with real Pub/Sub, Secret Manager, etc.
+- This is where the agent first interacts with real external systems (GitHub, Slack, Jira)
 
 ### 13.3 Production Deployment (Pulumi)
 
-- All infrastructure managed as code
-- Automated via CI/CD
-- Full observability and security controls
+- All infrastructure managed as code via the Pulumi stack from AIW001 Section 8
+- Automated via CI/CD (GitHub Actions + Workload Identity Federation)
+- Full observability, security controls, and explainability (see AIW001 Sections 12 and 14)
 
 ---
 
@@ -982,7 +1036,8 @@ const getSecret = async (name: string) => {
 - Should we standardize on a specific testing framework (Jest vs. Mocha)?
 - Do we need a shared local development environment setup script?
 - How should teams handle shared emulator instances for team testing?
-- What's the recommended approach for testing Cursor CLI integration locally?
+- What's the recommended approach for testing headless agent CLI integration locally? Should we provide a mock agent binary that returns deterministic output for CI/CD pipelines?
+- As agent runtimes evolve (MCP-based tool servers, multi-agent orchestration), will the local Functions Framework + emulator model remain sufficient, or will we need a local agent mesh emulator?
 
 ---
 
@@ -992,7 +1047,8 @@ const getSecret = async (name: string) => {
 - [Pub/Sub Emulator](https://cloud.google.com/pubsub/docs/emulator)
 - [Cloud Run Functions Local Development](https://cloud.google.com/functions/docs/2nd-gen/local-development)
 - [Functions Framework Debugging](https://github.com/GoogleCloudPlatform/functions-framework-nodejs#debugging)
-- AIW001: Reference Architecture for Agentic Automations on GCP
+- AIW001: Agent-Native Golden Path on GCP Cloud Run Functions
+- AIW003: BRAID Reasoning Layer for Agentic Automations
 
 ---
 

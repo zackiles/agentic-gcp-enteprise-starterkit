@@ -1,26 +1,26 @@
-RFC AIW003: BRAID Reasoning Layer for Agentic Automations
+RFC AIW003: BRAID Reasoning Layer for Agent-Native Cloud Run Functions
 
 **Status**: Proposed  
 **Owners**: Platform Eng  
 **Reviewers**: AI/ML, App and Service Teams  
 **Decision Date**: N/A  
-**Scope**: Extends AIW001/AIW002 with a structured reasoning layer for agent functions, enabling deterministic, auditable, and cost-efficient LLM reasoning within the Cloud Run architecture.
+**Scope**: Extends the AIW001 golden path and AIW002 local workflow with a structured reasoning layer for Cloud Run Function–based agents. Enables deterministic, auditable, and cost-efficient LLM reasoning—a critical requirement for agent-native workloads in regulated enterprises where explainability is non-negotiable.
 
 ---
 
 ## Architecture Relationship
 
-This RFC builds directly on the reference architecture (AIW001) and local development workflow (AIW002):
+This RFC builds directly on the agent-native golden path (AIW001) and local development workflow (AIW002). Where AIW001 defines *how agents execute* and AIW002 defines *how teams iterate*, AIW003 defines *how agents reason*—and crucially, how that reasoning is made visible, bounded, and auditable for organizations that require explainability of autonomous decisions.
 
 | Component | AIW001/002 Foundation | AIW003 Extension |
 |-----------|----------------------|------------------|
-| **Worker Functions** | Spawns Cursor CLI agents | Agents use BRAID for structured reasoning |
+| **Cloud Run Functions** | Spawns headless agent CLI | Agents use BRAID for structured reasoning before execution |
 | **Message Contract** | JSON payload with `agent.args` | Extends with `reasoning` field for GRD execution |
-| **Pub/Sub Flow** | Router → Topic → Worker | Worker decodes BRAID GRDs before agent execution |
+| **Pub/Sub Flow** | Router → Topic → Worker | Worker decodes BRAID GRDs before agent invocation |
 | **Local Testing** | Functions Framework + emulators | Adds BRAID encoder/decoder test utilities |
-| **Observability** | Cloud Logging with `correlation_id` | Logs include GRD execution traces for auditability |
+| **Explainability** | Cloud Logging with `correlation_id` | Logs include GRD execution traces for full auditability |
 
-**Position in Stack**: BRAID operates as the **reasoning layer** between incoming task requests and agent execution. When a worker function receives a message, it can optionally pre-process the task through BRAID encoding to create a deterministic execution plan before invoking the Cursor CLI.
+**Position in Stack**: BRAID operates as the **reasoning layer** between incoming task requests and agent execution. When a Cloud Run Function worker receives a message, it can optionally pre-process the task through BRAID encoding to create a deterministic execution plan before invoking the agent CLI. This is the explainability primitive for the golden path: every agent decision can be traced back to a graph of bounded reasoning nodes.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -48,14 +48,14 @@ This RFC builds directly on the reference architecture (AIW001) and local develo
 
 ## 1) Problem Statement
 
-The worker functions defined in AIW001 spawn Cursor CLI agents for tasks like PR reviews, Jira triage, and Slack automation. However, complex reasoning tasks face challenges:
+The Cloud Run Function workers defined in AIW001 spawn headless agent CLIs for tasks like PR reviews, Jira triage, and Slack automation. However, complex reasoning tasks face challenges that become acute in enterprise environments where regulators, auditors, and compliance teams need to understand *why* an autonomous agent made a particular decision:
 
-- **Unbounded reasoning**: Agents may produce verbose, inconsistent outputs
-- **Cost inefficiency**: Chain-of-Thought (CoT) approaches consume excessive tokens
-- **Hallucination risk**: Unstructured reasoning drifts from task constraints
-- **Audit difficulty**: Natural-language reasoning chains are hard to trace
+- **Unbounded reasoning**: Agents may produce verbose, inconsistent outputs. In a multi-tenant enterprise, inconsistency between agent runs for similar inputs erodes trust.
+- **Cost inefficiency**: Chain-of-Thought (CoT) approaches consume excessive tokens. At enterprise scale, token cost is a real operational concern.
+- **Hallucination risk**: Unstructured reasoning drifts from task constraints. For regulated industries, a hallucinated action on a production system is not just a bug—it is a compliance event.
+- **Audit difficulty**: Natural-language reasoning chains are hard to trace. When an auditor asks "why did the agent approve this PR?", the answer must be more structured than a wall of text.
 
-BRAID (Bounded Reasoning for Autonomous Inference and Decisions) addresses these by encoding reasoning into compact Guided Reasoning Diagrams (GRDs) that enforce deterministic execution paths.
+BRAID (Bounded Reasoning for Autonomous Inference and Decisions) addresses these by encoding reasoning into compact Guided Reasoning Diagrams (GRDs) that enforce deterministic execution paths. It is the explainability and traceability layer that makes the AIW001 golden path viable for stringent enterprise use cases.
 
 ---
 
@@ -68,9 +68,9 @@ BRAID transforms agent prompts into Mermaid-based GRDs before execution, yieldin
 - **Near-zero hallucinations** through bounded reasoning paths
 - **Full auditability** with traceable graph execution
 
-### How It Integrates with AIW001
+### How It Integrates with the Golden Path
 
-The worker function from AIW001 is extended to optionally invoke the BRAID encoder:
+The Cloud Run Function worker from AIW001 is extended to optionally invoke the BRAID encoder before agent execution. This is a composable layer—teams can adopt BRAID incrementally without changing their function structure or deployment model:
 
 ```typescript
 // functions/worker.ts (extended from AIW001)
@@ -329,6 +329,8 @@ const slackMessage = {
 
 ## 6) Local Testing (Extends AIW002)
 
+Local testing of BRAID follows the same zero-friction philosophy as AIW002: no cloud resources required, no container builds, just Functions Framework + test scripts. Teams can iterate on GRD quality and reasoning structure as fast as they iterate on function logic.
+
 ### 6.1 BRAID Test Utilities
 
 Add test utilities consistent with AIW002 Section 5:
@@ -490,41 +492,44 @@ F --> G[Output];
 
 ---
 
-## 9) Security Considerations
+## 9) Security and Compliance Considerations
 
-BRAID enhances security within the AIW001 framework:
+BRAID strengthens the security posture of the AIW001 golden path and provides the explainability layer that regulated enterprises require. For organizations in banking, telecom, or government, the ability to produce a deterministic, hashable reasoning trace for every autonomous agent action is not a nice-to-have—it is a prerequisite for deploying agents beyond sandbox environments.
 
-- **Masking**: Sensitive values use `<MASK>` tokens, preventing data leakage in logs
-- **Bounded execution**: GRDs prevent unbounded agent expansion that could consume excessive resources
-- **Audit trail**: Every GRD is hashable and traceable via `correlation_id`
-- **Compliance validation**: Outputs are validated against the schema before execution
+- **Masking**: Sensitive values use `<MASK>` tokens, preventing data leakage in logs and GRD artifacts
+- **Bounded execution**: GRDs prevent unbounded agent expansion that could consume excessive resources or drift into unintended actions
+- **Audit trail**: Every GRD is hashable and traceable via `correlation_id`. When stored in GCS with retention policies, these form a compliance-ready record of agent reasoning
+- **Compliance validation**: Outputs are validated against the schema before execution. Failed validations are logged and can trigger human-in-the-loop review via the escape hatches described in AIW001 Section 11
+- **Deterministic reproducibility**: Given the same input and GRD, the agent's execution path is reproducible. This enables post-incident analysis and regulatory reporting
 
 ---
 
 ## 10) Rollout Plan
 
-Integrates with AIW001 Section 19:
+Integrates with the speed-oriented rollout from AIW001 Section 19. BRAID adoption is incremental and opt-in—no existing agent functions need to change until a team is ready.
 
-1. **Phase 1**: Add BRAID library to `agents-mono` package
-2. **Phase 2**: Enable `useBraid: true` for PR reviewer agent (shadow mode)
-3. **Phase 3**: Compare metrics between BRAID and non-BRAID executions
-4. **Phase 4**: Roll out to Jira triage and Slack agents
-5. **Phase 5**: Default BRAID to `true` for all complex reasoning tasks
+1. **Phase 1**: Add BRAID library to `agents-mono` package. No changes to existing functions.
+2. **Phase 2**: Enable `useBraid: true` for PR reviewer agent in shadow mode. Agent generates GRDs but does not use them for execution—compare reasoning quality side-by-side.
+3. **Phase 3**: Compare metrics between BRAID and non-BRAID executions. Measure token cost reduction, output consistency, and compliance score improvements.
+4. **Phase 4**: Roll out to Jira triage and Slack agents. Begin persisting GRD artifacts to GCS for audit trail.
+5. **Phase 5**: Default BRAID to `true` for all complex reasoning tasks. At this point, the organization has a fully auditable, explainable agent reasoning layer running on the Cloud Run Functions golden path.
 
 ---
 
 ## 11) Open Questions
 
-- Should BRAID GRDs be stored in GCS for replay/debugging?
-- What's the fallback behavior if BRAID encoding fails?
-- Should we expose BRAID compliance scores in Slack responses?
+- Should BRAID GRDs be stored in GCS for replay/debugging? For regulated environments, the answer is likely yes—with retention policies matching the organization's compliance window.
+- What's the fallback behavior if BRAID encoding fails? The golden path default should be to proceed without BRAID (agent executes with unstructured reasoning) and log the failure, rather than blocking execution. Fail-open for experimentation; fail-closed can be a production configuration.
+- Should we expose BRAID compliance scores in Slack responses? This could build trust with stakeholders who are skeptical of autonomous agent output.
+- As agentic reasoning frameworks mature in 2026 (structured tool-use chains, MCP-based reasoning graphs, multi-agent deliberation), should BRAID evolve to emit MCP-compatible reasoning traces in addition to Mermaid GRDs?
 
 ---
 
 ## 12) References
 
-- AIW001: Reference Architecture for Agentic Automations on GCP
-- AIW002: Local Development Workflow for Rapid Iteration
+- AIW001: Agent-Native Golden Path on GCP Cloud Run Functions
+- AIW002: Local Development Workflow — Zero-to-Agent in Minutes
 - [BRAID Paper] Amcalar, A., & Cinar, E. (2025). BRAID: Bounded Reasoning for Autonomous Inference and Decisions. arXiv:2512.15959
 - [Graph of Thoughts] Besta et al. (2023). Graph of Thoughts: Solving Elaborate Problems with Large Language Models
-- [Tree of Thoughts] Yao et al. (2023). Tree of Thoughts: Deliberate Problem Solving with Large Language Models#
+- [Tree of Thoughts] Yao et al. (2023). Tree of Thoughts: Deliberate Problem Solving with Large Language Models
+- [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) — Emerging standard for agent tool-use and context sharing
