@@ -4,6 +4,11 @@
   "engines": {
     "node": ">=20"
   },
+  "agentRuntime": {
+    "name": "cursor-agent",
+    "version": "1.0.0",
+    "note": "Pin to exact version. Update deliberately, not automatically."
+  },
   "dependencies": {
     "@google-cloud/functions-framework": "^3.4.0",
     "@google-cloud/pubsub": "^7.7.0",

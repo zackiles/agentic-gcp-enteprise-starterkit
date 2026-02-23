@@ -569,6 +569,17 @@ Cursor CLI usage and Slack delayed responses are standard patterns. References: 
 }
 ```
 
+**Agent CLI supply chain and reproducibility**
+
+"Works today, mysteriously broken tomorrow" is a real risk when the agent runtime binary drifts between deployments. The headless agent CLI is a critical build dependency—treat it with the same rigor as any other binary in the supply chain:
+
+- **Pin the version.** Record the exact CLI version in a manifest file (e.g., `.agent-runtime-version` or an entry in `package.json` engines) and install that specific version at build time. Never pull `latest` in CI/CD.
+- **Prefer vendoring or deterministic install.** Either vendor the binary into the repo (checked into version control or fetched from a known-good artifact in GCS/Artifact Registry during build), or use a deterministic installer script that validates a checksum before placing the binary on `PATH`.
+- **Verify at build and at cold start.** The CI/CD pipeline should run `cursor-agent --version` as a build step (see Section 10). The cold-start self-check in the worker (above) provides a runtime safety net. Both should log the exact version for auditability.
+- **Track version drift.** Include the CLI version in structured log output so that when agent behavior changes between deployments, you can correlate it with a runtime version change.
+
+> Deeper provenance and signing requirements (SBOM generation, binary attestation, Sigstore verification) are valuable for production hardening but are out of scope for the initial golden path. Reserve these for a later hardening RFC if the organization's supply chain policy requires them.
+
 **Cursor CLI permissions (`.cursor/cli.json`)**
 
 > Ship this file in the function's build output to deny shell execution by default. This reduces blast radius and makes agent behavior deterministic.
