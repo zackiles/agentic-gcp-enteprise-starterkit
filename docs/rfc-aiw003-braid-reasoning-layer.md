@@ -1,4 +1,4 @@
-RFC AIW003: BRAID Reasoning Layer for Agent-Native Cloud Run Functions
+# RFC AIW003: BRAID Reasoning Layer for Agent-Native Cloud Run Functions
 
 **Status**: Proposed  
 **Owners**: Platform Eng  
